@@ -2895,69 +2895,66 @@
             });
         };
 
-        // 處理並清洗餐廳資料 (完整保留原版邏輯 + 合併使用者自訂私房店家 + 點餐連結欄位)
-        function processData(rawData, isFallback) {
-            baseSheetStores = [];
-            const dayMap = {
-                'Monday': '星期一', 'Tuesday': '星期二', 'Wednesday': '星期三',
-                'Thursday': '星期四', 'Friday': '星期五', 'Saturday': '星期六', 'Sunday': '星期日'
+        // 星期英文對照表與時間格式整理小幫手
+        const DAY_NAME_MAP = {
+            'Monday': '星期一', 'Tuesday': '星期二', 'Wednesday': '星期三',
+            'Thursday': '星期四', 'Friday': '星期五', 'Saturday': '星期六', 'Sunday': '星期日'
+        };
+
+        function formatTimeShort(timeStr) {
+            if (!timeStr || timeStr.trim() === '') return null;
+            return timeStr.trim().substring(0, 5);
+        }
+
+        // 單一職責 1：將單筆原始資料列清洗並轉換為標準店家物件
+        function parseStoreRow(row) {
+            const storeName = row.name ? row.name.trim() : '';
+            if (!storeName || storeName.toLowerCase() === 'nan') return null;
+
+            const t1Open = formatTimeShort(row.open_time_1);
+            const t1Close = formatTimeShort(row.close_time_1);
+            const t2Open = formatTimeShort(row.open_time_2);
+            const t2Close = formatTimeShort(row.close_time_2);
+
+            const timesStr = [];
+            if (t1Open && t1Close) timesStr.push(`${t1Open}-${t1Close}`);
+            if (t2Open && t2Close) timesStr.push(`${t2Open}-${t2Close}`);
+
+            const rawClosed = [row.closed_days_1, row.closed_days_2, row.closed_days_3]
+                .filter(Boolean)
+                .map(d => d.trim())
+                .filter(d => d !== '');
+
+            const meals = [row.meal_time_1, row.meal_time_2, row.meal_time_3]
+                .filter(Boolean)
+                .map(m => m.trim())
+                .filter(m => m !== '');
+
+            const rawOrderLink = (row.order_link || row['點餐連結'] || row['線上點餐'] || '').trim();
+
+            return {
+                name: storeName,
+                type: row.type ? row.type.trim() : '其他',
+                price_level: parseInt(row['price_level (均消預算)']) || 100,
+                meal_times: meals,
+                rating: parseFloat(row.rating) || 0,
+                open: timesStr.length > 0 ? timesStr.join(", ") : "未提供",
+                closed: rawClosed.length > 0 ? rawClosed.map(c => DAY_NAME_MAP[c] || c).join(", ") : "無",
+                raw_open_1: t1Open,
+                raw_close_1: t1Close,
+                raw_open_2: t2Open,
+                raw_close_2: t2Close,
+                raw_closed_days: rawClosed,
+                lat: parseFloat(row['lat(緯度)']),
+                lng: parseFloat(row['lng(經度)']),
+                map_link: row.map_link || "",
+                order_link: rawOrderLink,
+                isCustom: false
             };
+        }
 
-            const cleanTime = (t) => {
-                if (!t || t.trim() === '') return null;
-                return t.trim().substring(0, 5);
-            };
-
-            rawData.forEach(row => {
-                const storeName = row.name ? row.name.trim() : '';
-                if (!storeName || storeName === '' || storeName.toLowerCase() === 'nan') return;
-
-                const t1_open = cleanTime(row.open_time_1);
-                const t1_close = cleanTime(row.close_time_1);
-                const t2_open = cleanTime(row.open_time_2);
-                const t2_close = cleanTime(row.close_time_2);
-
-                let times_str = [];
-                if (t1_open && t1_close) times_str.push(`${t1_open}-${t1_close}`);
-                if (t2_open && t2_close) times_str.push(`${t2_open}-${t2_close}`);
-
-                let raw_closed = [];
-                if (row.closed_days_1) raw_closed.push(row.closed_days_1.trim());
-                if (row.closed_days_2) raw_closed.push(row.closed_days_2.trim());
-                if (row.closed_days_3) raw_closed.push(row.closed_days_3.trim());
-
-                let meals = [];
-                if (row.meal_time_1) meals.push(row.meal_time_1.trim());
-                if (row.meal_time_2) meals.push(row.meal_time_2.trim());
-                if (row.meal_time_3) meals.push(row.meal_time_3.trim());
-
-                const rawOrderLink = (row.order_link || row['點餐連結'] || row['線上點餐'] || '').trim();
-
-                baseSheetStores.push({
-                    name: storeName,
-                    type: row.type ? row.type.trim() : '其他',
-                    price_level: parseInt(row['price_level (均消預算)']) || 100,
-                    meal_times: meals,
-                    rating: parseFloat(row.rating) || 0,
-                    open: times_str.length > 0 ? times_str.join(", ") : "未提供",
-                    closed: raw_closed.length > 0 ? raw_closed.map(c => dayMap[c] || c).join(", ") : "無",
-                    raw_open_1: t1_open,
-                    raw_close_1: t1_close,
-                    raw_open_2: t2_open,
-                    raw_close_2: t2_close,
-                    raw_closed_days: raw_closed,
-                    lat: parseFloat(row['lat(緯度)']),
-                    lng: parseFloat(row['lng(經度)']),
-                    map_link: row.map_link || "",
-                    order_link: rawOrderLink,
-                    isCustom: false
-                });
-            });
-
-            // 合併雲端店家與使用者新增的私房店家，並進行防重疊分散計算
-            rebuildMergedStores();
-
-            // 更新頂部手繪同步狀態橫幅
+        // 單一職責 2：更新同步完成後的狀態橫幅、解鎖轉盤與歡迎畫面
+        function renderSyncReadyUI(isFallback) {
             const statusDiv = document.getElementById('sync-status');
             statusDiv.className = 'sumikko-card-sm px-3.5 py-1.5 bg-[#EAF6EE] flex items-center gap-2 text-xs font-black self-stretch sm:self-auto justify-center';
             statusDiv.innerHTML = `
@@ -2970,9 +2967,6 @@
 
             document.getElementById('btn-draw').disabled = false;
             document.getElementById('wheel-center-btn').disabled = false;
-
-            updateAllBadgesAndCounts();
-            updateEconomyUI();
 
             document.getElementById('result-area').innerHTML = `
                 <div class="flex flex-col items-center gap-2 py-2">
@@ -2995,6 +2989,18 @@
                     <p class="font-black text-sm sm:text-base text-[#5C4938]">同步完成！選好左方膠囊條件，按「轉動呷蝦米幸運盲盒」吧</p>
                 </div>
             `;
+        }
+
+        // 主入口函式：協調資料清洗、合併店家與初始化畫面
+        function processData(rawData, isFallback) {
+            baseSheetStores = rawData
+                .map(parseStoreRow)
+                .filter(store => store !== null);
+
+            rebuildMergedStores();
+            updateAllBadgesAndCounts();
+            updateEconomyUI();
+            renderSyncReadyUI(isFallback);
         }
 
         // 點選膠囊按鈕切換條件
