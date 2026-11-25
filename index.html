@@ -2304,62 +2304,85 @@
             type: 'all'
         };
 
-        // 初始化讀取 LocalStorage 資料
-        function loadUserStorage() {
+        // 單一職責 1：安全讀取單一組 localStorage JSON，單項損壞不影響其他資料
+        function readStorageJson(key, fallbackValue) {
             try {
-                const rawFavs = localStorage.getItem(STORAGE_KEYS.FAVS);
-                favoriteStores = rawFavs ? JSON.parse(rawFavs) : [];
-
-                const rawReviews = localStorage.getItem(STORAGE_KEYS.REVIEWS);
-                storeReviews = rawReviews ? JSON.parse(rawReviews) : {};
-
-                const rawCustom = localStorage.getItem(STORAGE_KEYS.CUSTOM_STORES);
-                customAddedStores = rawCustom ? JSON.parse(rawCustom) : [];
-
-                const rawEco = localStorage.getItem(STORAGE_KEYS.ECONOMY);
-                if (rawEco) {
-                    const parsedEco = JSON.parse(rawEco);
-                    economyState = {
-                        coins: typeof parsedEco.coins === 'number' ? parsedEco.coins : 50,
-                        streak: typeof parsedEco.streak === 'number' ? parsedEco.streak : 0,
-                        lastCheckInDate: parsedEco.lastCheckInDate || '',
-                        lastSpinRewardDate: parsedEco.lastSpinRewardDate || ''
-                    };
-                }
-
-                const rawUnlocks = localStorage.getItem(STORAGE_KEYS.UNLOCKED_ITEMS);
-                if (rawUnlocks) {
-                    const parsedU = JSON.parse(rawUnlocks);
-                    unlockState = {
-                        mascots: Array.isArray(parsedU.mascots) && parsedU.mascots.length ? parsedU.mascots : ['shrimp', 'rice'],
-                        companion: parsedU.companion || 'shrimp',
-                        houseSkins: Array.isArray(parsedU.houseSkins) && parsedU.houseSkins.length ? parsedU.houseSkins : ['classic'],
-                        activeHouseSkin: parsedU.activeHouseSkin || 'classic',
-                        vehicles: Array.isArray(parsedU.vehicles) && parsedU.vehicles.length ? parsedU.vehicles.filter(v => v !== 'walk') : ['shrimp_car'],
-                        activeVehiclesOnMap: Array.isArray(parsedU.activeVehiclesOnMap) ? parsedU.activeVehiclesOnMap : ['shrimp_car'],
-                        decors: Array.isArray(parsedU.decors) && parsedU.decors.length ? parsedU.decors : ['ferris_wheel'],
-                        activeDecorsOnMap: Array.isArray(parsedU.activeDecorsOnMap) ? parsedU.activeDecorsOnMap : ['ferris_wheel'],
-                        townAtmosphere: parsedU.townAtmosphere || 'day',
-                        customTownPositions: parsedU.customTownPositions || {}
-                    };
-                    if (unlockState.vehicles.length === 0) {
-                        unlockState.vehicles = ['shrimp_car'];
-                        unlockState.activeVehiclesOnMap = ['shrimp_car'];
-                    }
-                    if (!unlockState.decors || unlockState.decors.length === 0) {
-                        unlockState.decors = ['ferris_wheel'];
-                        unlockState.activeDecorsOnMap = ['ferris_wheel'];
-                    }
-                }
+                const raw = localStorage.getItem(key);
+                return raw ? JSON.parse(raw) : fallbackValue;
             } catch (e) {
-                favoriteStores = [];
-                storeReviews = {};
-                hiddenTodayStores = [];
-                customAddedStores = [];
+                return fallbackValue;
             }
-            updateEconomyUI();
         }
 
+        // 單一職責 2：整理「蝦米幣與簽到狀態」的預設值與欄位防呆
+        function normalizeEconomyState(rawEco) {
+            if (!rawEco || typeof rawEco !== 'object') {
+                return { coins: 50, streak: 0, lastCheckInDate: '', lastSpinRewardDate: '' };
+            }
+            return {
+                coins: typeof rawEco.coins === 'number' ? rawEco.coins : 50,
+                streak: typeof rawEco.streak === 'number' ? rawEco.streak : 0,
+                lastCheckInDate: rawEco.lastCheckInDate || '',
+                lastSpinRewardDate: rawEco.lastSpinRewardDate || ''
+            };
+        }
+
+        // 單一職責 3：整理「解鎖角色、造型、車車與小鎮設施」的預設值與容錯補齊
+        function normalizeUnlockState(rawUnlocks) {
+            const defaultState = {
+                mascots: ['shrimp', 'rice'],
+                companion: 'shrimp',
+                houseSkins: ['classic'],
+                activeHouseSkin: 'classic',
+                vehicles: ['shrimp_car'],
+                activeVehiclesOnMap: ['shrimp_car'],
+                decors: ['ferris_wheel'],
+                activeDecorsOnMap: ['ferris_wheel'],
+                townAtmosphere: 'day',
+                customTownPositions: {}
+            };
+
+            if (!rawUnlocks || typeof rawUnlocks !== 'object') return defaultState;
+
+            const validVehicles = Array.isArray(rawUnlocks.vehicles) && rawUnlocks.vehicles.length
+                ? rawUnlocks.vehicles.filter(v => v !== 'walk')
+                : ['shrimp_car'];
+            const finalVehicles = validVehicles.length > 0 ? validVehicles : ['shrimp_car'];
+
+            const finalDecors = Array.isArray(rawUnlocks.decors) && rawUnlocks.decors.length
+                ? rawUnlocks.decors
+                : ['ferris_wheel'];
+
+            return {
+                mascots: Array.isArray(rawUnlocks.mascots) && rawUnlocks.mascots.length ? rawUnlocks.mascots : ['shrimp', 'rice'],
+                companion: rawUnlocks.companion || 'shrimp',
+                houseSkins: Array.isArray(rawUnlocks.houseSkins) && rawUnlocks.houseSkins.length ? rawUnlocks.houseSkins : ['classic'],
+                activeHouseSkin: rawUnlocks.activeHouseSkin || 'classic',
+                vehicles: finalVehicles,
+                activeVehiclesOnMap: Array.isArray(rawUnlocks.activeVehiclesOnMap) ? rawUnlocks.activeVehiclesOnMap : [...finalVehicles],
+                decors: finalDecors,
+                activeDecorsOnMap: Array.isArray(rawUnlocks.activeDecorsOnMap) ? rawUnlocks.activeDecorsOnMap : [...finalDecors],
+                townAtmosphere: rawUnlocks.townAtmosphere || 'day',
+                customTownPositions: rawUnlocks.customTownPositions || {}
+            };
+        }
+
+        // 主入口函式：讀取各項本地儲存資料並同步更新畫面
+        function loadUserStorage() {
+            const rawFavs = readStorageJson(STORAGE_KEYS.FAVS, []);
+            favoriteStores = Array.isArray(rawFavs) ? rawFavs : [];
+
+            const rawReviews = readStorageJson(STORAGE_KEYS.REVIEWS, {});
+            storeReviews = (rawReviews && typeof rawReviews === 'object') ? rawReviews : {};
+
+            const rawCustom = readStorageJson(STORAGE_KEYS.CUSTOM_STORES, []);
+            customAddedStores = Array.isArray(rawCustom) ? rawCustom : [];
+
+            economyState = normalizeEconomyState(readStorageJson(STORAGE_KEYS.ECONOMY, null));
+            unlockState = normalizeUnlockState(readStorageJson(STORAGE_KEYS.UNLOCKED_ITEMS, null));
+
+            updateEconomyUI();
+        }
         function saveEconomyToStorage() {
             try {
                 localStorage.setItem(STORAGE_KEYS.ECONOMY, JSON.stringify(economyState));
@@ -3293,231 +3316,259 @@
         }
 
         // 渲染抽中的餐廳結果卡片 (整合：口袋收藏按鈕、蝦米評鑑筆記、線上點餐連結、暫時躲進角落PASS、Leaflet 奶油互動地圖)
+        // 料理分類膠囊粉彩底色對照表
+        const RESULT_TYPE_BADGE_CLASSES = {
+            '中式': 'bg-[#FCE8A6] text-[#5C4938]',
+            '西式': 'bg-[#F9C5BD] text-[#5C4938]',
+            '日式': 'bg-[#D9C8EC] text-[#5C4938]',
+            '飲料': 'bg-[#BBE2F2] text-[#5C4938]'
+        };
+
+        // 子區塊 1：盲盒主題橫幅、完食印章、店名與收藏/評鑑按鈕列
+        function buildResultHeaderHtml(pick, blindBox, isFav, isStamped, encodedName) {
+            const stampHtml = isStamped ? `
+                <div class="stamp-badge absolute -top-3 right-2 z-20 pointer-events-none">
+                    <svg class="w-20 h-20" viewBox="0 0 80 80" fill="none">
+                        <circle cx="40" cy="40" r="34" fill="#FFFDF9" fill-opacity="0.9" stroke="#D9534F" stroke-width="3" stroke-dasharray="6 3"/>
+                        <circle cx="40" cy="40" r="28" stroke="#D9534F" stroke-width="1.5"/>
+                        <text x="40" y="36" text-anchor="middle" fill="#D9534F" font-size="13" font-weight="900">完食認證</text>
+                        <text x="40" y="52" text-anchor="middle" fill="#D9534F" font-size="10" font-weight="900">呷蝦米蓋章</text>
+                    </svg>
+                </div>` : '';
+
+            return `
+                ${stampHtml}
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2.5 border-b-2 border-dashed border-[#E5DDD0]">
+                    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FCE8A6] text-[#5C4938] border-2 border-[#5C4938] text-xs sm:text-sm font-black">
+                        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
+                            <circle cx="10" cy="11" r="7" fill="#F3D39A" stroke="#5C4938" stroke-width="1.6"/>
+                            <circle cx="7.5" cy="11" r="1.2" fill="#5C4938"/>
+                            <circle cx="12.5" cy="11" r="1.2" fill="#5C4938"/>
+                        </svg>
+                        <span>盲盒開出：${blindBox.title}</span>
+                    </div>
+                    <span class="text-xs font-bold text-[#857262]">${blindBox.desc}</span>
+                </div>
+
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                    <div class="flex items-center gap-2.5 flex-wrap">
+                        <svg class="w-9 h-9 flex-shrink-0" viewBox="0 0 36 36" fill="none">
+                            <path d="M18 6C27 6 32 18 30 28C28 33 23 34 18 34C13 34 8 33 6 28C4 18 9 6 18 6Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="2"/>
+                            <circle cx="13.5" cy="21" r="1.5" fill="#5C4938"/>
+                            <circle cx="22.5" cy="21" r="1.5" fill="#5C4938"/>
+                            <path d="M16.5 22Q18 23.5 19.5 22" stroke="#5C4938" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+                            <ellipse cx="11" cy="23" rx="2.2" ry="1.3" fill="#F9C5BD"/>
+                            <ellipse cx="25" cy="23" rx="2.2" ry="1.3" fill="#F9C5BD"/>
+                        </svg>
+                        <h3 class="font-hand text-2xl sm:text-3xl font-black text-[#5C4938] tracking-wide">
+                            ${pick.name}
+                        </h3>
+                        ${pick.isCustom ? `<span class="px-2.5 py-0.5 rounded-full bg-[#A8D8B9] border-2 border-[#5C4938] text-xs font-black">私房新增</span>` : ''}
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" onclick="toggleFavorite(decodeURIComponent('${encodedName}'))"
+                            class="capsule-btn ${isFav ? 'bg-[#F9C5BD]' : 'bg-white'} text-xs py-1.5 px-3">
+                            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
+                                <path d="M10 17C10 17 3 12.5 3 7.8C3 5.4 4.8 3.5 7.2 3.5C8.6 3.5 10 4.5 10 4.5C10 4.5 11.4 3.5 12.8 3.5C15.2 3.5 17 5.4 17 7.8C17 12.5 10 17 10 17Z"
+                                      fill="${isFav ? '#E87A64' : '#FFFFFF'}" stroke="#5C4938" stroke-width="1.8"/>
+                            </svg>
+                            <span>${isFav ? '已收進口袋' : '收進口袋'}</span>
+                        </button>
+
+                        <button type="button" onclick="openReviewModal(decodeURIComponent('${encodedName}'))"
+                            class="capsule-btn bg-[#FCE8A6] text-xs py-1.5 px-3">
+                            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
+                                <path d="M4 14L13 5L16 8L7 17H4V14Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="1.8" stroke-linejoin="round"/>
+                            </svg>
+                            <span>蝦米評鑑 / 蓋完食章</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 子區塊 2：評分、料理分類、均消與距離起點粉彩膠囊標籤
+        function buildResultMetaTagsHtml(pick) {
+            const typeBg = RESULT_TYPE_BADGE_CLASSES[pick.type] || 'bg-[#A8D8B9] text-[#5C4938]';
+            return `
+                <div class="flex flex-wrap items-center gap-2 mb-4">
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white border-2 border-[#5C4938] text-xs font-black">
+                        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
+                            <path d="M10 2L12.5 7L18 7.8L14 11.7L15 17.2L10 14.6L5 17.2L6 11.7L2 7.8L7.5 7L10 2Z" fill="#FCE8A6" stroke="#5C4938" stroke-width="1.5" stroke-linejoin="round"/>
+                        </svg>
+                        Google ${pick.rating}
+                    </span>
+
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full ${typeBg} border-2 border-[#5C4938] text-xs font-black">
+                        ${pick.type}
+                    </span>
+
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white border-2 border-[#5C4938] text-xs font-black">
+                        均消 ~${pick.price_level}元
+                    </span>
+
+                    ${pick.distStr ? `
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#F9C5BD] border-2 border-[#5C4938] text-xs font-black">
+                        距離起點 ${pick.distStr}
+                    </span>` : ''}
+                </div>
+            `;
+        }
+
+        // 子區塊 3：使用者個人的蝦米美味評鑑、私房筆記與拍立得照片
+        function buildResultReviewBoxHtml(pick, review) {
+            const tagsHtml = (review.tags && review.tags.length > 0) ? `
+                <div class="flex flex-wrap gap-1.5 mt-2.5">
+                    ${review.tags.map(t => `<span class="px-2.5 py-0.5 rounded-full bg-[#FCE8A6] border border-[#5C4938] text-[11px] font-black"># ${t}</span>`).join('')}
+                </div>` : '';
+
+            const noteHtml = review.note ? `
+                <div class="mt-2 text-xs font-bold text-[#5C4938] bg-[#FAF6F0] p-2.5 rounded-xl border border-[#DFD5C6]">
+                    私房筆記：「${review.note}」
+                </div>` : '';
+
+            const photoHtml = review.photoData ? `
+                <div class="mt-3 flex justify-center sm:justify-start">
+                    <div class="polaroid-frame w-48 text-center">
+                        <div class="polaroid-tape"></div>
+                        <img src="${review.photoData}" alt="${pick.name} 完食拍立得" class="w-full h-28 object-cover rounded-lg border border-[#5C4938]">
+                        <div class="mt-1 text-[10px] font-black text-[#5C4938]">📸 完食紀念 · ${review.photoDate || '美味回憶'}</div>
+                    </div>
+                </div>` : '';
+
+            return `
+                <div class="sumikko-card-sm bg-[#FFFDF7] p-3.5 mb-4 border-dashed">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-black text-[#5C4938]">我的蝦米推薦度：</span>
+                            <div class="flex items-center gap-0.5">
+                                ${getFriedShrimpIconsHTML(review.rating, "w-5 h-5")}
+                            </div>
+                            <span class="text-xs font-bold text-[#857262]">
+                                ${review.rating > 0 ? `${review.rating} 隻炸蝦！` : '（尚未評分，點上方按鈕評鑑領 +30 蝦米幣）'}
+                            </span>
+                        </div>
+                    </div>
+                    ${tagsHtml}
+                    ${noteHtml}
+                    ${photoHtml}
+                </div>
+            `;
+        }
+
+        // 子區塊 4：營業資訊網格與內嵌迷你地圖
+        function buildResultScheduleAndMapHtml(pick, isOpen) {
+            const hasCoords = pick.lat && pick.lng && !isNaN(pick.lat);
+            const mapHtml = hasCoords ? `
+                <div class="sumikko-map-wrapper mb-4">
+                    <div class="masking-tape"></div>
+                    <div id="result-mini-map" class="w-full h-[235px] z-10"></div>
+                    <div class="mt-2 flex flex-wrap items-center justify-end gap-2 px-1 text-[11px] font-extrabold text-[#857262]">
+                        <button type="button" onclick="locateUserForRoute()" class="px-3 py-1 rounded-full bg-[#FCE8A6] hover:bg-[#F7A072] hover:text-white border-2 border-[#5C4938] text-[#5C4938] transition flex items-center gap-1 shadow-[0_2px_0_#5C4938]">
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="none">
+                                <path d="M3 10H17M17 10L12 5M17 10L12 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span>畫出「我的所在地 ➔ 餐廳」覓食路線</span>
+                        </button>
+                    </div>
+                </div>` : '';
+
+            return `
+                <div class="sumikko-card-sm bg-white p-3.5 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-sm font-bold">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="8" fill="${isOpen ? '#A8D8B9' : '#F9C5BD'}" stroke="#5C4938" stroke-width="1.8"/>
+                            <circle cx="9.5" cy="12" r="1.2" fill="#5C4938"/>
+                            <circle cx="14.5" cy="12" r="1.2" fill="#5C4938"/>
+                        </svg>
+                        <span>狀態：${isOpen ? "<strong class='text-[#2E7D5B]'>現在營業中</strong>" : "<strong class='text-[#C45143]'>目前休息中</strong>"}</span>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="8" fill="#FCE8A6" stroke="#5C4938" stroke-width="1.8"/>
+                            <path d="M12 8V12L14.5 13.5" stroke="#5C4938" stroke-width="1.8" stroke-linecap="round"/>
+                        </svg>
+                        <span class="truncate" title="${pick.open}">時間：${pick.open}</span>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                            <rect x="4" y="5" width="16" height="15" rx="3" fill="#D9C8EC" stroke="#5C4938" stroke-width="1.8"/>
+                            <path d="M8 3V6M16 3V6M4 10H20" stroke="#5C4938" stroke-width="1.8" stroke-linecap="round"/>
+                        </svg>
+                        <span>公休：${pick.closed}</span>
+                    </div>
+                </div>
+                ${mapHtml}
+            `;
+        }
+
+        // 子區塊 5：底部行動按鈕列（線上點餐 / Google 導航 / PASS重抽）
+        function buildResultActionButtonsHtml(pick, activeOrderLink, encodedName) {
+            const orderBtnHtml = activeOrderLink ? `
+                <a href="${activeOrderLink}" target="_blank" rel="noopener noreferrer"
+                   class="flex-1 sumikko-card-sm bg-[#FCE8A6] hover:bg-[#F7A072] hover:text-white text-[#5C4938] font-black py-3 px-4 flex items-center justify-center gap-2 transition transform hover:-translate-y-0.5 text-sm">
+                    <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                        <rect x="6" y="2" width="12" height="20" rx="3" fill="#FFFFFF" stroke="#5C4938" stroke-width="2"/>
+                        <path d="M9 7H15M9 11H15M9 15H12" stroke="#E87A64" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="12" cy="18.5" r="1" fill="#5C4938"/>
+                    </svg>
+                    <span>線上點餐免排隊</span>
+                </a>` : `
+                <button type="button" onclick="openReviewModal(decodeURIComponent('${encodedName}'))"
+                    class="sumikko-card-sm bg-[#FFFDF9] hover:bg-[#FCE8A6] text-[#857262] hover:text-[#5C4938] font-black py-3 px-3.5 flex items-center justify-center gap-1.5 transition text-xs">
+                    <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 4V16M4 10H16" stroke="#5C4938" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span>補充點餐連結</span>
+                </button>`;
+
+            const mapNavBtnHtml = pick.map_link ? `
+                <a href="${pick.map_link}" target="_blank" rel="noopener noreferrer"
+                   class="flex-1 sumikko-card-sm bg-[#A8D8B9] hover:bg-[#95CCA8] text-[#5C4938] font-black py-3 px-4 flex items-center justify-center gap-2 transition transform hover:-translate-y-0.5 text-sm">
+                    <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                        <path d="M3 11L21 3L13 21L11 13L3 11Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
+                    </svg>
+                    <span>開啟 Google 導航</span>
+                </a>` : '';
+
+            return `
+                <div class="flex flex-col sm:flex-row flex-wrap gap-2.5">
+                    ${orderBtnHtml}
+                    ${mapNavBtnHtml}
+                    <button type="button" onclick="hideStoreTodayAndRespin(decodeURIComponent('${encodedName}'))"
+                        class="flex-1 sumikko-card-sm bg-[#D9C8EC] hover:bg-[#CBB5E4] text-[#5C4938] font-black py-3 px-4 flex items-center justify-center gap-2 transition transform hover:-translate-y-0.5 text-sm">
+                        <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                            <path d="M12 4C18 4 21 11 20 18C19 21 15 22 12 22C9 22 5 21 4 18C3 11 6 4 12 4Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="1.8"/>
+                            <path d="M4 14Q12 11 20 14L19 21Q12 23 5 21Z" fill="#5C4938"/>
+                        </svg>
+                        <span>先蓋海苔被休息 (PASS)</span>
+                    </button>
+                </div>
+            `;
+        }
+
+        // 主入口函式：組裝抽籤結果卡片並初始化迷你地圖
         function renderResultCard(pick, blindBox) {
             const isOpen = checkIsOpenNow(pick);
             const isFav = favoriteStores.includes(pick.name);
             const review = storeReviews[pick.name] || { rating: 0, tags: [], note: '', orderLink: '', stamped: false };
             const activeOrderLink = getStoreOrderLink(pick);
-            const resultArea = document.getElementById('result-area');
-
-            // 依據料理類型配置粉彩底色
-            let typeBg = "bg-[#A8D8B9] text-[#5C4938]";
-            if (pick.type === "中式") typeBg = "bg-[#FCE8A6] text-[#5C4938]";
-            if (pick.type === "西式") typeBg = "bg-[#F9C5BD] text-[#5C4938]";
-            if (pick.type === "日式") typeBg = "bg-[#D9C8EC] text-[#5C4938]";
-            if (pick.type === "飲料") typeBg = "bg-[#BBE2F2] text-[#5C4938]";
-
             const encodedName = encodeSafe(pick.name);
 
+            const resultArea = document.getElementById('result-area');
             resultArea.innerHTML = `
                 <div class="w-full text-left animate-pop-card relative">
-                    <!-- 若已蓋完食印章，右上角浮現紅色角落完食章 -->
-                    ${review.stamped ? `
-                    <div class="stamp-badge absolute -top-3 right-2 z-20 pointer-events-none">
-                        <svg class="w-20 h-20" viewBox="0 0 80 80" fill="none">
-                            <circle cx="40" cy="40" r="34" fill="#FFFDF9" fill-opacity="0.9" stroke="#D9534F" stroke-width="3" stroke-dasharray="6 3"/>
-                            <circle cx="40" cy="40" r="28" stroke="#D9534F" stroke-width="1.5"/>
-                            <text x="40" y="36" text-anchor="middle" fill="#D9534F" font-size="13" font-weight="900">完食認證</text>
-                            <text x="40" y="52" text-anchor="middle" fill="#D9534F" font-size="10" font-weight="900">呷蝦米蓋章</text>
-                        </svg>
-                    </div>` : ''}
-
-                    <!-- 抽中的盲盒主題小標籤 -->
-                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2.5 border-b-2 border-dashed border-[#E5DDD0]">
-                        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FCE8A6] text-[#5C4938] border-2 border-[#5C4938] text-xs sm:text-sm font-black">
-                            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
-                                <circle cx="10" cy="11" r="7" fill="#F3D39A" stroke="#5C4938" stroke-width="1.6"/>
-                                <circle cx="7.5" cy="11" r="1.2" fill="#5C4938"/>
-                                <circle cx="12.5" cy="11" r="1.2" fill="#5C4938"/>
-                            </svg>
-                            <span>盲盒開出：${blindBox.title}</span>
-                        </div>
-                        <span class="text-xs font-bold text-[#857262]">${blindBox.desc}</span>
-                    </div>
-
-                    <!-- 餐廳名稱與口袋收藏愛心按鈕列 -->
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-                        <div class="flex items-center gap-2.5 flex-wrap">
-                            <svg class="w-9 h-9 flex-shrink-0" viewBox="0 0 36 36" fill="none">
-                                <path d="M18 6C27 6 32 18 30 28C28 33 23 34 18 34C13 34 8 33 6 28C4 18 9 6 18 6Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="2"/>
-                                <circle cx="13.5" cy="21" r="1.5" fill="#5C4938"/>
-                                <circle cx="22.5" cy="21" r="1.5" fill="#5C4938"/>
-                                <path d="M16.5 22Q18 23.5 19.5 22" stroke="#5C4938" stroke-width="1.4" fill="none" stroke-linecap="round"/>
-                                <ellipse cx="11" cy="23" rx="2.2" ry="1.3" fill="#F9C5BD"/>
-                                <ellipse cx="25" cy="23" rx="2.2" ry="1.3" fill="#F9C5BD"/>
-                            </svg>
-                            <h3 class="font-hand text-2xl sm:text-3xl font-black text-[#5C4938] tracking-wide">
-                                ${pick.name}
-                            </h3>
-                            ${pick.isCustom ? `<span class="px-2.5 py-0.5 rounded-full bg-[#A8D8B9] border-2 border-[#5C4938] text-xs font-black">私房新增</span>` : ''}
-                        </div>
-
-                        <!-- 互動按鈕組：收進口袋 + 寫評鑑蓋章 -->
-                        <div class="flex flex-wrap items-center gap-2">
-                            <button type="button" onclick="toggleFavorite(decodeURIComponent('${encodedName}'))"
-                                class="capsule-btn ${isFav ? 'bg-[#F9C5BD]' : 'bg-white'} text-xs py-1.5 px-3">
-                                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
-                                    <path d="M10 17C10 17 3 12.5 3 7.8C3 5.4 4.8 3.5 7.2 3.5C8.6 3.5 10 4.5 10 4.5C10 4.5 11.4 3.5 12.8 3.5C15.2 3.5 17 5.4 17 7.8C17 12.5 10 17 10 17Z"
-                                          fill="${isFav ? '#E87A64' : '#FFFFFF'}" stroke="#5C4938" stroke-width="1.8"/>
-                                </svg>
-                                <span>${isFav ? '已收進口袋' : '收進口袋'}</span>
-                            </button>
-
-                            <button type="button" onclick="openReviewModal(decodeURIComponent('${encodedName}'))"
-                                class="capsule-btn bg-[#FCE8A6] text-xs py-1.5 px-3">
-                                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
-                                    <path d="M4 14L13 5L16 8L7 17H4V14Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="1.8" stroke-linejoin="round"/>
-                                </svg>
-                                <span>蝦米評鑑 / 蓋完食章</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- 評分、分類、均消與距離手繪粉彩標籤 -->
-                    <div class="flex flex-wrap items-center gap-2 mb-4">
-                        <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white border-2 border-[#5C4938] text-xs font-black">
-                            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none">
-                                <path d="M10 2L12.5 7L18 7.8L14 11.7L15 17.2L10 14.6L5 17.2L6 11.7L2 7.8L7.5 7L10 2Z" fill="#FCE8A6" stroke="#5C4938" stroke-width="1.5" stroke-linejoin="round"/>
-                            </svg>
-                            Google ${pick.rating}
-                        </span>
-
-                        <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full ${typeBg} border-2 border-[#5C4938] text-xs font-black">
-                            ${pick.type}
-                        </span>
-
-                        <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white border-2 border-[#5C4938] text-xs font-black">
-                            均消 ~${pick.price_level}元
-                        </span>
-
-                        ${pick.distStr ? `
-                        <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#F9C5BD] border-2 border-[#5C4938] text-xs font-black">
-                            距離起點 ${pick.distStr}
-                        </span>` : ""}
-                    </div>
-
-                    <!-- 使用者個人的「蝦米美味評鑑＆私房筆記」展示盒 -->
-                    <div class="sumikko-card-sm bg-[#FFFDF7] p-3.5 mb-4 border-dashed">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xs font-black text-[#5C4938]">我的蝦米推薦度：</span>
-                                <div class="flex items-center gap-0.5">
-                                    ${getFriedShrimpIconsHTML(review.rating, "w-5 h-5")}
-                                </div>
-                                <span class="text-xs font-bold text-[#857262]">
-                                    ${review.rating > 0 ? `${review.rating} 隻炸蝦！` : '（尚未評分，點上方按鈕評鑑領 +30 蝦米幣）'}
-                                </span>
-                            </div>
-                        </div>
-
-                        ${(review.tags && review.tags.length > 0) ? `
-                        <div class="flex flex-wrap gap-1.5 mt-2.5">
-                            ${review.tags.map(t => `<span class="px-2.5 py-0.5 rounded-full bg-[#FCE8A6] border border-[#5C4938] text-[11px] font-black"># ${t}</span>`).join('')}
-                        </div>` : ''}
-
-                        ${review.note ? `
-                        <div class="mt-2 text-xs font-bold text-[#5C4938] bg-[#FAF6F0] p-2.5 rounded-xl border border-[#DFD5C6]">
-                            私房筆記：「${review.note}」
-                        </div>` : ''}
-
-                        ${review.photoData ? `
-                        <div class="mt-3 flex justify-center sm:justify-start">
-                            <div class="polaroid-frame w-48 text-center">
-                                <div class="polaroid-tape"></div>
-                                <img src="${review.photoData}" alt="${pick.name} 完食拍立得" class="w-full h-28 object-cover rounded-lg border border-[#5C4938]">
-                                <div class="mt-1 text-[10px] font-black text-[#5C4938]">📸 完食紀念 · ${review.photoDate || '美味回憶'}</div>
-                            </div>
-                        </div>` : ''}
-                    </div>
-
-                    <!-- 營業資訊手繪格 -->
-                    <div class="sumikko-card-sm bg-white p-3.5 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-sm font-bold">
-                        <div class="flex items-center gap-2">
-                            <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                                <circle cx="12" cy="12" r="8" fill="${isOpen ? '#A8D8B9' : '#F9C5BD'}" stroke="#5C4938" stroke-width="1.8"/>
-                                <circle cx="9.5" cy="12" r="1.2" fill="#5C4938"/>
-                                <circle cx="14.5" cy="12" r="1.2" fill="#5C4938"/>
-                            </svg>
-                            <span>狀態：${isOpen ? "<strong class='text-[#2E7D5B]'>現在營業中</strong>" : "<strong class='text-[#C45143]'>目前休息中</strong>"}</span>
-                        </div>
-
-                        <div class="flex items-center gap-2">
-                            <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                                <circle cx="12" cy="12" r="8" fill="#FCE8A6" stroke="#5C4938" stroke-width="1.8"/>
-                                <path d="M12 8V12L14.5 13.5" stroke="#5C4938" stroke-width="1.8" stroke-linecap="round"/>
-                            </svg>
-                            <span class="truncate" title="${pick.open}">時間：${pick.open}</span>
-                        </div>
-
-                        <div class="flex items-center gap-2">
-                            <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                                <rect x="4" y="5" width="16" height="15" rx="3" fill="#D9C8EC" stroke="#5C4938" stroke-width="1.8"/>
-                                <path d="M8 3V6M16 3V6M4 10H20" stroke="#5C4938" stroke-width="1.8" stroke-linecap="round"/>
-                            </svg>
-                            <span>公休：${pick.closed}</span>
-                        </div>
-                    </div>
-
-                    <!-- 蝦米世界主題互動地圖＋阿蝦米米專屬定位大頭針 -->
-                    ${(pick.lat && pick.lng && !isNaN(pick.lat)) ? `
-                    <div class="sumikko-map-wrapper mb-4">
-                        <div class="masking-tape"></div>
-                        <div id="result-mini-map" class="w-full h-[235px] z-10"></div>
-                        <div class="mt-2 flex flex-wrap items-center justify-end gap-2 px-1 text-[11px] font-extrabold text-[#857262]">
-                            <button type="button" onclick="locateUserForRoute()" class="px-3 py-1 rounded-full bg-[#FCE8A6] hover:bg-[#F7A072] hover:text-white border-2 border-[#5C4938] text-[#5C4938] transition flex items-center gap-1 shadow-[0_2px_0_#5C4938]">
-                                <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="none">
-                                    <path d="M3 10H17M17 10L12 5M17 10L12 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                                <span>畫出「我的所在地 ➔ 餐廳」覓食路線</span>
-                            </button>
-                        </div>
-                    </div>` : ""}
-
-                    <!-- 底部行動按鈕列：線上點餐直達車 + 開啟 Google 地圖導航 + 今日先蓋海苔被休息 (PASS重抽) -->
-                    <div class="flex flex-col sm:flex-row flex-wrap gap-2.5">
-                        ${activeOrderLink ? `
-                        <a href="${activeOrderLink}" target="_blank" rel="noopener noreferrer"
-                           class="flex-1 sumikko-card-sm bg-[#FCE8A6] hover:bg-[#F7A072] hover:text-white text-[#5C4938] font-black py-3 px-4 flex items-center justify-center gap-2 transition transform hover:-translate-y-0.5 text-sm">
-                            <!-- 手繪手機點餐小圖示 SVG -->
-                            <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                                <rect x="6" y="2" width="12" height="20" rx="3" fill="#FFFFFF" stroke="#5C4938" stroke-width="2"/>
-                                <path d="M9 7H15M9 11H15M9 15H12" stroke="#E87A64" stroke-width="2" stroke-linecap="round"/>
-                                <circle cx="12" cy="18.5" r="1" fill="#5C4938"/>
-                            </svg>
-                            <span>線上點餐免排隊</span>
-                        </a>` : `
-                        <button type="button" onclick="openReviewModal(decodeURIComponent('${encodedName}'))"
-                            class="sumikko-card-sm bg-[#FFFDF9] hover:bg-[#FCE8A6] text-[#857262] hover:text-[#5C4938] font-black py-3 px-3.5 flex items-center justify-center gap-1.5 transition text-xs">
-                            <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="none">
-                                <path d="M10 4V16M4 10H16" stroke="#5C4938" stroke-width="2" stroke-linecap="round"/>
-                            </svg>
-                            <span>補充點餐連結</span>
-                        </button>
-                        `}
-
-                        ${pick.map_link ? `
-                        <a href="${pick.map_link}" target="_blank" rel="noopener noreferrer"
-                           class="flex-1 sumikko-card-sm bg-[#A8D8B9] hover:bg-[#95CCA8] text-[#5C4938] font-black py-3 px-4 flex items-center justify-center gap-2 transition transform hover:-translate-y-0.5 text-sm">
-                            <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                                <path d="M3 11L21 3L13 21L11 13L3 11Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
-                            </svg>
-                            <span>開啟 Google 導航</span>
-                        </a>` : ""}
-
-                        <button type="button" onclick="hideStoreTodayAndRespin(decodeURIComponent('${encodedName}'))"
-                            class="flex-1 sumikko-card-sm bg-[#D9C8EC] hover:bg-[#CBB5E4] text-[#5C4938] font-black py-3 px-4 flex items-center justify-center gap-2 transition transform hover:-translate-y-0.5 text-sm">
-                            <!-- 蓋海苔被休息 SVG -->
-                            <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                                <path d="M12 4C18 4 21 11 20 18C19 21 15 22 12 22C9 22 5 21 4 18C3 11 6 4 12 4Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="1.8"/>
-                                <path d="M4 14Q12 11 20 14L19 21Q12 23 5 21Z" fill="#5C4938"/>
-                            </svg>
-                            <span>先蓋海苔被休息 (PASS)</span>
-                        </button>
-                    </div>
+                    ${buildResultHeaderHtml(pick, blindBox, isFav, review.stamped, encodedName)}
+                    ${buildResultMetaTagsHtml(pick)}
+                    ${buildResultReviewBoxHtml(pick, review)}
+                    ${buildResultScheduleAndMapHtml(pick, isOpen)}
+                    ${buildResultActionButtonsHtml(pick, activeOrderLink, encodedName)}
                 </div>
             `;
 
-            // 初始化結果卡片內的蝦米世界主題地圖
             if (pick.lat && pick.lng && !isNaN(pick.lat)) {
                 setTimeout(() => {
                     initResultMiniMap(pick);
@@ -3674,115 +3725,115 @@
         // 2. 'fav-store'：愛心炸蝦（口袋收藏好店）
         // 3. 'store-rice'：米米飯糰（當前選中店家）
         // 4. 'store-house'：可愛小房子（依 activeHouseSkin 切換：經典粉彩 / 焦糖布丁屋 / 宇治抹茶屋 / 草莓蛋糕屋）
-        function createSumikkoMapIcon(kind, storeType = '其他', isSelected = false) {
-            if (kind === 'user-shrimp') {
-                return L.divIcon({
-                    className: 'custom-sumikko-pin',
-                    iconSize: [48, 54],
-                    iconAnchor: [24, 48],
-                    popupAnchor: [0, -44],
-                    html: `
-                        <svg width="48" height="54" viewBox="0 0 48 54" fill="none" style="filter: drop-shadow(0 3px 0 #5C4938);">
-                            <path d="M24 51C34 39 42 29 42 19C42 9.5 34 2 24 2C14 2 6 9.5 6 19C6 29 14 39 24 51Z" fill="#FCE8A6" stroke="#5C4938" stroke-width="2.4"/>
-                            <path d="M19 10C17 6 22 6 23 9C25 6 29 6 28 10Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.5"/>
-                            <path d="M14 14C11 20 13 28 18 31C23 33 28 31 32 28C35 22 32 14 29 12C24 10 18 10 14 14Z" fill="#F3D39A" stroke="#5C4938" stroke-width="1.8"/>
-                            <circle cx="19.5" cy="21" r="1.5" fill="#5C4938"/>
-                            <circle cx="27.5" cy="21" r="1.5" fill="#5C4938"/>
-                            <path d="M22.5 22.2H24.5" stroke="#5C4938" stroke-width="1.4" stroke-linecap="round"/>
-                        </svg>
-                    `
-                });
+        // 經典小屋屋頂配色對照表
+        const HOUSE_ROOF_COLORS = {
+            '西式': '#F9C5BD',
+            '日式': '#D9C8EC',
+            '飲料': '#BBE2F2',
+            '其他異國料理': '#FCE8A6'
+        };
+
+        // 單一職責 1：產生 4 種小鎮房屋主題的內部 SVG 圖形
+        function getStoreHouseInnerSvg(skin, storeType) {
+            if (skin === 'pudding') {
+                return `
+                    <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
+                    <path d="M7 31L9 14H27L29 31H7Z" fill="#FCE8A6" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
+                    <path d="M7 14C7 10 29 10 29 14C29 17 25 18 23 16C21 18 15 18 13 16C11 18 7 17 7 14Z" fill="#8C583A" stroke="#5C4938" stroke-width="1.8"/>
+                    <circle cx="18" cy="7.5" r="3" fill="#E87A64" stroke="#5C4938" stroke-width="1.5"/>
+                    <rect x="14.5" y="22" width="7" height="9" rx="3" fill="#FFFDF9" stroke="#5C4938" stroke-width="1.6"/>
+                `;
+            }
+            if (skin === 'matcha') {
+                return `
+                    <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
+                    <rect x="7" y="16" width="22" height="15" rx="3" fill="#EAF6EE" stroke="#5C4938" stroke-width="2"/>
+                    <path d="M4 17C8 7 28 7 32 17H4Z" fill="#76B58B" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
+                    <circle cx="25" cy="8" r="3" fill="#FFFFFF" stroke="#5C4938" stroke-width="1.5"/>
+                    <circle cx="28" cy="11" r="2.5" fill="#F9C5BD" stroke="#5C4938" stroke-width="1.5"/>
+                    <rect x="14" y="21" width="8" height="10" rx="1.5" fill="#5C4938"/>
+                `;
+            }
+            if (skin === 'strawberry') {
+                return `
+                    <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
+                    <rect x="7" y="15" width="22" height="16" rx="3" fill="#FFF5F5" stroke="#5C4938" stroke-width="2"/>
+                    <path d="M5 16C7 9 29 9 31 16C28 19 25 16 22 18C19 16 17 19 14 18C11 16 8 19 5 16Z" fill="#F9C5BD" stroke="#5C4938" stroke-width="2"/>
+                    <path d="M18 4C15 4 14 9 18 11C22 9 21 4 18 4Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.5"/>
+                    <rect x="14.5" y="21" width="7" height="10" rx="3" fill="#F7A072" stroke="#5C4938" stroke-width="1.6"/>
+                `;
             }
 
-            if (kind === 'fav-store') {
-                // 真正的「愛心炸蝦（阿蝦抱著紅愛心）」地標圖！
-                const ringGlow = isSelected ? `<circle cx="24" cy="20" r="21" fill="none" stroke="#FCE8A6" stroke-width="3.5"/>` : '';
-                return L.divIcon({
-                    className: 'custom-sumikko-pin',
-                    iconSize: [50, 56],
-                    iconAnchor: [25, 50],
-                    popupAnchor: [0, -46],
-                    html: `
-                        <svg width="50" height="56" viewBox="0 0 50 56" fill="none" style="filter: drop-shadow(0 3px 0 #5C4938);">
-                            ${ringGlow}
-                            <!-- 蜜桃粉愛心定位底座 -->
-                            <path d="M25 53C35 41 43 30 43 20C43 10.2 35 2.5 25 2.5C15 2.5 7 10.2 7 20C7 30 15 41 25 53Z" fill="#F9C5BD" stroke="#5C4938" stroke-width="2.4"/>
-                            <!-- 阿蝦頭頂紅珊瑚色炸蝦尾扇形 -->
-                            <path d="M18 11C15 5 21 4 24 9C26 4 32 4 30 10C35 6 38 11 32 14Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.7" stroke-linejoin="round"/>
-                            <!-- 金黃酥脆炸蝦身體 -->
-                            <path d="M14 15C10 21 12 31 18 34C22 36 28 36 32 34C38 31 40 21 36 15C31 11 19 11 14 15Z" fill="#F3D39A" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
-                            <!-- 寬眼距豆豆眼 + 腮紅 + w 貓嘴 -->
-                            <circle cx="19.5" cy="21.5" r="1.6" fill="#5C4938"/>
-                            <circle cx="30.5" cy="21.5" r="1.6" fill="#5C4938"/>
-                            <ellipse cx="16.5" cy="23.2" rx="2.2" ry="1.2" fill="#F59B90"/>
-                            <ellipse cx="33.5" cy="23.2" rx="2.2" ry="1.2" fill="#F59B90"/>
-                            <path d="M23 22.2Q24 23.8 25 22.2Q26 23.8 27 22.2" stroke="#5C4938" stroke-width="1.3" fill="none" stroke-linecap="round"/>
-                            <!-- 肚子前雙手緊緊抱著大愛心 -->
-                            <path d="M25 35.5C25 35.5 18 31.2 18 27.6C18 25.6 19.6 24.2 21.5 24.2C23.1 24.2 25 25.7 25 25.7C25 25.7 26.9 24.2 28.5 24.2C30.4 24.2 32 25.6 32 27.6C32 31.2 25 35.5 25 35.5Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.6" stroke-linejoin="round"/>
-                        </svg>
-                    `
-                });
-            }
+            const roofColor = HOUSE_ROOF_COLORS[storeType] || '#F7A072';
+            return `
+                <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
+                <rect x="7" y="15" width="22" height="16" rx="3" fill="#FFFDF9" stroke="#5C4938" stroke-width="2"/>
+                <path d="M4 16L18 5L32 16H4Z" fill="${roofColor}" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
+                <rect x="11" y="21" width="6" height="10" rx="1.5" fill="#F3D39A" stroke="#5C4938" stroke-width="1.6"/>
+                <rect x="20" y="20" width="5.5" height="5.5" rx="1" fill="#FCE8A6" stroke="#5C4938" stroke-width="1.5"/>
+            `;
+        }
 
-            if (kind === 'store-house') {
-                const skin = unlockState.activeHouseSkin || 'classic';
-                let houseSvg = '';
+        // 單一職責 2：建立「你的所在地（阿蝦旗幟）」圖示
+        function buildUserShrimpIcon() {
+            return L.divIcon({
+                className: 'custom-sumikko-pin',
+                iconSize: [48, 54],
+                iconAnchor: [24, 48],
+                popupAnchor: [0, -44],
+                html: `
+                    <svg width="48" height="54" viewBox="0 0 48 54" fill="none" style="filter: drop-shadow(0 3px 0 #5C4938);">
+                        <path d="M24 51C34 39 42 29 42 19C42 9.5 34 2 24 2C14 2 6 9.5 6 19C6 29 14 39 24 51Z" fill="#FCE8A6" stroke="#5C4938" stroke-width="2.4"/>
+                        <path d="M19 10C17 6 22 6 23 9C25 6 29 6 28 10Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.5"/>
+                        <path d="M14 14C11 20 13 28 18 31C23 33 28 31 32 28C35 22 32 14 29 12C24 10 18 10 14 14Z" fill="#F3D39A" stroke="#5C4938" stroke-width="1.8"/>
+                        <circle cx="19.5" cy="21" r="1.5" fill="#5C4938"/>
+                        <circle cx="27.5" cy="21" r="1.5" fill="#5C4938"/>
+                        <path d="M22.5 22.2H24.5" stroke="#5C4938" stroke-width="1.4" stroke-linecap="round"/>
+                    </svg>
+                `
+            });
+        }
 
-                if (skin === 'pudding') {
-                    // 焦糖布丁甜點屋
-                    houseSvg = `
-                        <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
-                        <path d="M7 31L9 14H27L29 31H7Z" fill="#FCE8A6" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
-                        <path d="M7 14C7 10 29 10 29 14C29 17 25 18 23 16C21 18 15 18 13 16C11 18 7 17 7 14Z" fill="#8C583A" stroke="#5C4938" stroke-width="1.8"/>
-                        <circle cx="18" cy="7.5" r="3" fill="#E87A64" stroke="#5C4938" stroke-width="1.5"/>
-                        <rect x="14.5" y="22" width="7" height="9" rx="3" fill="#FFFDF9" stroke="#5C4938" stroke-width="1.6"/>
-                    `;
-                } else if (skin === 'matcha') {
-                    // 宇治抹茶白玉屋
-                    houseSvg = `
-                        <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
-                        <rect x="7" y="16" width="22" height="15" rx="3" fill="#EAF6EE" stroke="#5C4938" stroke-width="2"/>
-                        <path d="M4 17C8 7 28 7 32 17H4Z" fill="#76B58B" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
-                        <circle cx="25" cy="8" r="3" fill="#FFFFFF" stroke="#5C4938" stroke-width="1.5"/>
-                        <circle cx="28" cy="11" r="2.5" fill="#F9C5BD" stroke="#5C4938" stroke-width="1.5"/>
-                        <rect x="14" y="21" width="8" height="10" rx="1.5" fill="#5C4938"/>
-                    `;
-                } else if (skin === 'strawberry') {
-                    // 草莓鮮奶油蛋糕屋
-                    houseSvg = `
-                        <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
-                        <rect x="7" y="15" width="22" height="16" rx="3" fill="#FFF5F5" stroke="#5C4938" stroke-width="2"/>
-                        <path d="M5 16C7 9 29 9 31 16C28 19 25 16 22 18C19 16 17 19 14 18C11 16 8 19 5 16Z" fill="#F9C5BD" stroke="#5C4938" stroke-width="2"/>
-                        <path d="M18 4C15 4 14 9 18 11C22 9 21 4 18 4Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.5"/>
-                        <rect x="14.5" y="21" width="7" height="10" rx="3" fill="#F7A072" stroke="#5C4938" stroke-width="1.6"/>
-                    `;
-                } else {
-                    // 預設：依料理類型換粉彩屋頂的小房子
-                    let roofColor = "#F7A072";
-                    if (storeType === "西式") roofColor = "#F9C5BD";
-                    else if (storeType === "日式") roofColor = "#D9C8EC";
-                    else if (storeType === "飲料") roofColor = "#BBE2F2";
-                    else if (storeType === "其他異國料理") roofColor = "#FCE8A6";
+        // 單一職責 3：建立「口袋收藏好店（愛心炸蝦）」圖示
+        function buildFavStoreIcon(isSelected) {
+            const ringGlow = isSelected ? `<circle cx="24" cy="20" r="21" fill="none" stroke="#FCE8A6" stroke-width="3.5"/>` : '';
+            return L.divIcon({
+                className: 'custom-sumikko-pin',
+                iconSize: [50, 56],
+                iconAnchor: [25, 50],
+                popupAnchor: [0, -46],
+                html: `
+                    <svg width="50" height="56" viewBox="0 0 50 56" fill="none" style="filter: drop-shadow(0 3px 0 #5C4938);">
+                        ${ringGlow}
+                        <path d="M25 53C35 41 43 30 43 20C43 10.2 35 2.5 25 2.5C15 2.5 7 10.2 7 20C7 30 15 41 25 53Z" fill="#F9C5BD" stroke="#5C4938" stroke-width="2.4"/>
+                        <path d="M18 11C15 5 21 4 24 9C26 4 32 4 30 10C35 6 38 11 32 14Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.7" stroke-linejoin="round"/>
+                        <path d="M14 15C10 21 12 31 18 34C22 36 28 36 32 34C38 31 40 21 36 15C31 11 19 11 14 15Z" fill="#F3D39A" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
+                        <circle cx="19.5" cy="21.5" r="1.6" fill="#5C4938"/>
+                        <circle cx="30.5" cy="21.5" r="1.6" fill="#5C4938"/>
+                        <ellipse cx="16.5" cy="23.2" rx="2.2" ry="1.2" fill="#F59B90"/>
+                        <ellipse cx="33.5" cy="23.2" rx="2.2" ry="1.2" fill="#F59B90"/>
+                        <path d="M23 22.2Q24 23.8 25 22.2Q26 23.8 27 22.2" stroke="#5C4938" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+                        <path d="M25 35.5C25 35.5 18 31.2 18 27.6C18 25.6 19.6 24.2 21.5 24.2C23.1 24.2 25 25.7 25 25.7C25 25.7 26.9 24.2 28.5 24.2C30.4 24.2 32 25.6 32 27.6C32 31.2 25 35.5 25 35.5Z" fill="#E87A64" stroke="#5C4938" stroke-width="1.6" stroke-linejoin="round"/>
+                    </svg>
+                `
+            });
+        }
 
-                    houseSvg = `
-                        <ellipse cx="18" cy="32" rx="13" ry="3" fill="#DFD5C6"/>
-                        <rect x="7" y="15" width="22" height="16" rx="3" fill="#FFFDF9" stroke="#5C4938" stroke-width="2"/>
-                        <path d="M4 16L18 5L32 16H4Z" fill="${roofColor}" stroke="#5C4938" stroke-width="2" stroke-linejoin="round"/>
-                        <rect x="11" y="21" width="6" height="10" rx="1.5" fill="#F3D39A" stroke="#5C4938" stroke-width="1.6"/>
-                        <rect x="20" y="20" width="5.5" height="5.5" rx="1" fill="#FCE8A6" stroke="#5C4938" stroke-width="1.5"/>
-                    `;
-                }
+        // 單一職責 4：建立「一般美食店家（可愛小房子）」圖示
+        function buildStoreHouseIcon(storeType) {
+            const skin = unlockState.activeHouseSkin || 'classic';
+            const houseSvg = getStoreHouseInnerSvg(skin, storeType);
+            return L.divIcon({
+                className: 'custom-sumikko-house',
+                iconSize: [36, 36],
+                iconAnchor: [18, 32],
+                popupAnchor: [0, -28],
+                html: `<svg width="36" height="36" viewBox="0 0 36 36" fill="none" style="filter: drop-shadow(0 2px 0 #5C4938);" class="transition-transform hover:scale-110">${houseSvg}</svg>`
+            });
+        }
 
-                return L.divIcon({
-                    className: 'custom-sumikko-house',
-                    iconSize: [36, 36],
-                    iconAnchor: [18, 32],
-                    popupAnchor: [0, -28],
-                    html: `<svg width="36" height="36" viewBox="0 0 36 36" fill="none" style="filter: drop-shadow(0 2px 0 #5C4938);" class="transition-transform hover:scale-110">${houseSvg}</svg>`
-                });
-            }
-
-            // 'store-rice'：當前選中的店家（米米小飯糰地標）
+        // 單一職責 5：建立「當前選中店家（米米小飯糰）」圖示
+        function buildSelectedRiceIcon() {
             return L.divIcon({
                 className: 'custom-sumikko-pin',
                 iconSize: [50, 56],
@@ -3792,7 +3843,6 @@
                     <svg width="50" height="56" viewBox="0 0 50 56" fill="none" style="filter: drop-shadow(0 3px 0 #5C4938);">
                         <circle cx="25" cy="20" r="21" fill="none" stroke="#FCE8A6" stroke-width="3.5"/>
                         <path d="M25 53C35 41 43 30 43 20C43 10.2 35 2.5 25 2.5C15 2.5 7 10.2 7 20C7 30 15 41 25 53Z" fill="#A8D8B9" stroke="#5C4938" stroke-width="2.4"/>
-                        <!-- 米米小飯糰 -->
                         <path d="M25 9C33 9 37 18 36 27C35 31 30 33 25 33C20 33 15 31 14 27C13 18 17 9 25 9Z" fill="#FFFFFF" stroke="#5C4938" stroke-width="1.8"/>
                         <rect x="20" y="25" width="10" height="8" rx="1.5" fill="#5C4938"/>
                         <circle cx="20.5" cy="20.5" r="1.5" fill="#5C4938"/>
@@ -3802,6 +3852,14 @@
                     </svg>
                 `
             });
+        }
+
+        // 主入口函式（派發器）：依據圖示種類回傳對應的 Leaflet 圖標
+        function createSumikkoMapIcon(kind, storeType = '其他', isSelected = false) {
+            if (kind === 'user-shrimp') return buildUserShrimpIcon();
+            if (kind === 'fav-store') return buildFavStoreIcon(isSelected);
+            if (kind === 'store-house') return buildStoreHouseIcon(storeType);
+            return buildSelectedRiceIcon();
         }
 
         // 初始化結果卡片內的「蝦米小鎮」互動小地圖 (未選中店家顯示為小房子，抽中店家顯示為米米飯糰或愛心炸蝦地標)
@@ -3924,15 +3982,8 @@
         }
 
         // 在蝦米小鎮地圖上渲染已解鎖的「吉祥物小夥伴」與「交通工具」
-        function renderTownMascotsAndVehicles(mapInstance, targetLayer, allowDrag = true) {
-            if (!mapInstance || !targetLayer || typeof L === 'undefined') return;
-
-            if (allowDrag) {
-                stopTownCruiseAnimation();
-                townVehicleMarkers = [];
-            }
-
-            // 1. 渲染所有已解鎖的吉祥物小夥伴 (可自由拖曳擺放在小鎮各處！)
+        // 單一職責 1：渲染小鎮吉祥物小夥伴與拖曳擺放事件
+        function renderTownMascotMarkers(targetLayer, allowDrag) {
             unlockState.mascots.forEach(mId => {
                 const ch = MASCOT_CHARACTERS.find(c => c.id === mId);
                 if (!ch) return;
@@ -3985,8 +4036,10 @@
                     });
                 }
             });
+        }
 
-            // 2. 渲染所有已解鎖並啟用的小鎮交通工具
+        // 單一職責 2：渲染小鎮交通工具並登記巡遊清單，回傳啟用數量
+        function renderTownVehicleMarkers(targetLayer, allowDrag) {
             const activeVehicles = (unlockState.activeVehiclesOnMap && unlockState.activeVehiclesOnMap.length)
                 ? unlockState.activeVehiclesOnMap.filter(vId => unlockState.vehicles.includes(vId))
                 : unlockState.vehicles;
@@ -4057,7 +4110,11 @@
                 }
             });
 
-            // 3. 階段 C 新增：渲染所有已解鎖並啟用的「小鎮景觀與遊樂場設施」
+            return activeVehicles.length;
+        }
+
+        // 單一職責 3：渲染小鎮景觀與遊樂場設施，回傳啟用數量
+        function renderTownDecorMarkers(targetLayer, allowDrag) {
             const activeDecors = (unlockState.activeDecorsOnMap && unlockState.activeDecorsOnMap.length)
                 ? unlockState.activeDecorsOnMap.filter(dId => (unlockState.decors || []).includes(dId))
                 : (unlockState.decors || ['ferris_wheel']);
@@ -4093,20 +4150,20 @@
                     zIndexOffset: 680
                 }).addTo(targetLayer);
 
+                const actionFooterHtml = dId === 'ferris_wheel'
+                    ? `<button type="button" onclick="switchTab('arcade')" class="mt-1 w-full px-3 py-1 rounded-full bg-[#FCE8A6] border-2 border-[#5C4938] text-xs font-black hover:bg-[#F7A072] hover:text-white transition">
+                           🎮 進入蝦米遊樂場玩遊戲！
+                       </button>`
+                    : `<div class="text-[10px] font-black text-[#E87A64] bg-[#FAF6F0] rounded-lg py-1 px-2 border border-[#DFD5C6]">
+                           🛠️ 可直接拖曳我擺放到喜歡的位置！
+                       </div>`;
+
                 dMarker.bindPopup(`
                     <div class="p-1.5 text-center min-w-[175px]">
                         <span class="px-2 py-0.5 rounded-full bg-[#A8D8B9] border border-[#5C4938] text-[10px] font-black">小鎮特色景觀</span>
                         <div class="font-hand font-black text-base text-[#5C4938] mt-1">${dObj.name}</div>
                         <p class="text-[11px] font-bold text-[#857262] my-1">${dObj.desc}</p>
-                        ${dId === 'ferris_wheel' ? `
-                            <button type="button" onclick="switchTab('arcade')" class="mt-1 w-full px-3 py-1 rounded-full bg-[#FCE8A6] border-2 border-[#5C4938] text-xs font-black hover:bg-[#F7A072] hover:text-white transition">
-                                🎮 進入蝦米遊樂場玩遊戲！
-                            </button>
-                        ` : `
-                            <div class="text-[10px] font-black text-[#E87A64] bg-[#FAF6F0] rounded-lg py-1 px-2 border border-[#DFD5C6]">
-                                🛠️ 可直接拖曳我擺放到喜歡的位置！
-                            </div>
-                        `}
+                        ${actionFooterHtml}
                     </div>
                 `);
 
@@ -4120,12 +4177,32 @@
                 }
             });
 
-            // 更新小鎮生活狀態文字與裝潢快捷列
+            return activeDecors.length;
+        }
+
+        // 單一職責 4：更新小鎮生活狀態文字與裝潢快捷列
+        function updateTownSummaryAndQuickbar(mascotCount, vehicleCount, decorCount) {
             const summaryEl = document.getElementById('town-life-summary');
             if (summaryEl) {
-                summaryEl.textContent = `小鎮內目前有 ${unlockState.mascots.length} 位小夥伴、${activeVehicles.length} 台車車與 ${activeDecors.length} 座景觀設施（皆可直接拖曳擺放！）`;
+                summaryEl.textContent = `小鎮內目前有 ${mascotCount} 位小夥伴、${vehicleCount} 台車車與 ${decorCount} 座景觀設施（皆可直接拖曳擺放！）`;
             }
             renderMapDecorQuickbar();
+        }
+
+        // 主入口函式：協調小鎮吉祥物、車車、景觀設施渲染與巡遊啟動
+        function renderTownMascotsAndVehicles(mapInstance, targetLayer, allowDrag = true) {
+            if (!mapInstance || !targetLayer || typeof L === 'undefined') return;
+
+            if (allowDrag) {
+                stopTownCruiseAnimation();
+                townVehicleMarkers = [];
+            }
+
+            renderTownMascotMarkers(targetLayer, allowDrag);
+            const vehicleCount = renderTownVehicleMarkers(targetLayer, allowDrag);
+            const decorCount = renderTownDecorMarkers(targetLayer, allowDrag);
+
+            updateTownSummaryAndQuickbar(unlockState.mascots.length, vehicleCount, decorCount);
 
             if (allowDrag && isTownCruiseRunning && townVehicleMarkers.length > 0) {
                 startTownCruiseAnimation();
