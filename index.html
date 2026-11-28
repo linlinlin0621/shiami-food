@@ -5650,7 +5650,6 @@
             notify(msg) {
                 this.getApp()?.notifier?.show(msg);
             }
-
             injectStyles() {
                 if (document.getElementById('divination-addon-style')) return;
                 const style = document.createElement('style');
@@ -5676,10 +5675,24 @@
                         80% { transform: translate(5px, -8px) rotate(8deg); }
                     }
                     .div-tortoise-anim { animation: divTortoiseShake 0.45s ease-in-out infinite; }
+
+                    /* if Android：手機版標題列微縮，避免擠壓或跑版 */
+                    body.is-android .flex.sm\\:hidden h1 {
+                        font-size: 1.15rem !important;
+                        letter-spacing: -0.02em;
+                    }
+                    body.is-android .flex.sm\\:hidden .capsule-btn {
+                        padding-left: 0.45rem !important;
+                        padding-right: 0.45rem !important;
+                        font-size: 10px !important;
+                    }
+
+                    /* if iOS：維持原本樣式，有需要微調再加在這裡 */
+                    body.is-ios .flex.sm\\:hidden {
+                    }
                 `;
                 document.head.appendChild(style);
             }
-
             mountStages() {
                 const drawBtn = document.getElementById('btn-draw');
                 if (!drawBtn || document.getElementById('div-extra-stages-wrap')) return;
@@ -5929,8 +5942,18 @@
                 });
             }
         }
+        function applyDeviceClasses() {
+            if (!document.body) return;
+            const ua = navigator.userAgent || '';
+            const isAndroid = /Android/i.test(ua);
+            const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+            document.body.classList.toggle('is-android', isAndroid);
+            document.body.classList.toggle('is-ios', isIOS);
+        }
 
         window.addEventListener('DOMContentLoaded', () => {
+            applyDeviceClasses();
             window.shiamiDivination = new DivinationBridge();
         });
     })();
